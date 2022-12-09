@@ -4,6 +4,9 @@ from keras.losses import MeanSquaredError
 from nn_modules.preprocessing import Patches, MaskPatches, ReshapePatches
 from nn.cnn import Conv2DResnet
 
+MASKED_PATHCES = 0
+FULL_PATCHES = 1
+
 class MaskedModel():
 
     def __init__(self, input_shape: tuple,
@@ -18,10 +21,11 @@ class MaskedModel():
         # >> Input
         self.input = Input(shape=self.input_shape)
         # >> Patch conversion + masking
-        patches = Patches(patch_size=self.patch_size)(self.input)
-        self.masked_images, self.masked_patches = MaskPatches(num_masked_patches=self.num_masked_patches)(patches)
+        self.patches = Patches(patch_size=self.patch_size)(self.input)
+        self.masked_images, self.masked_patches = MaskPatches(num_masked_patches=self.num_masked_patches)(self.patches)
         # >> Reshape
         if self.reshape_patches:
+            self.patches = ReshapePatches(patch_size=patch_size)(self.patches)
             self.masked_images = ReshapePatches(patch_size=self.patch_size)(self.masked_images)
             self.masked_patches = ReshapePatches(patch_size=self.patch_size)(self.masked_patches)
 
@@ -33,13 +37,21 @@ class MaskedConv2DResnet(MaskedModel):
     def __init__(self, input_shape: tuple, 
                        patch_size: int, 
                        num_masked_patches: int,
-                       resnet: Conv2DResnet) -> None:
+                       resnet: Conv2DResnet,
+                       target_shape: int = MASKED_PATHCES) -> None:
         super().__init__(input_shape, patch_size, num_masked_patches, True)
         self.resnet = resnet
         self.output = resnet.as_model()(self.masked_images)
         self.mse = MeanSquaredError()
 
-        self.loss = Lambda(lambda x : self.mse(x[0], x[1]))([self.masked_patches, self.output])
+        if target_shape == MASKED_PATHCES:
+            model_target = self.masked_patches
+        elif target_shape == FULL_PATCHES:
+            model_target = self.patches
+        else:
+            raise ValueError("{model_target} is an invalid target shape option.".format(target=str(model_target)))
+
+        self.loss = Lambda(lambda x : self.mse(x[0], x[1]))([model_target, self.output])
         self.model = Model(inputs = self.input, outputs = self.output)
 
         self.model.add_loss(self.loss)
